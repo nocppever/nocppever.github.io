@@ -207,8 +207,6 @@ def update_graph(site, payload_range):
 
 - [SpaceX API Documentation](https://github.com/r-spacex/SpaceX-API)
 - [Project GitHub Repository](https://github.com/TheCode2019/IBM_powerpoint)
-- [Interactive Dashboard Demo](Your-Dashboard-Link)
-- [Full Analysis Notebook](Your-Notebook-Link)
 
 This analysis provides valuable insights for space launch companies and demonstrates the power of data science in modern space operations. The high accuracy of our predictive models shows the potential for data-driven decision-making in space launch planning.
 
