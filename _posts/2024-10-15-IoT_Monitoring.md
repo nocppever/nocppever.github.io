@@ -317,4 +317,4 @@ This project serves as a foundation for building more sophisticated monitoring a
 - [ArduinoJson Documentation](https://arduinojson.org/)
 - [psutil Documentation](https://psutil.readthedocs.io/)
 
-Would you like me to add more technical details about any particular aspect of the project?
+
