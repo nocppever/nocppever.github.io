@@ -1,0 +1,406 @@
+---
+layout: post
+title: Building a Dynamic Firmware Launcher for M5Stack Core2
+categories: [Embedded,C++,ESP32,IoT]
+---
+
+When working with ESP32-based devices like the M5Stack Core2, managing multiple firmware versions can become challenging. In this comprehensive guide, I'll walk through how I built a sophisticated firmware launcher that not only handles OTA updates but also provides a polished user interface and robust error handling. This project combines embedded systems programming, UI design, and web technologies to create a seamless firmware management experience.
+
+## System Architecture
+
+### Hardware Requirements
+- M5Stack Core2 (ESP32-based device)
+- SD Card for firmware storage
+- 16MB PSRAM for buffer management
+- 320x240 IPS display
+
+### Software Stack
+- ESP32 Arduino framework
+- ESPAsyncWebServer for WiFi uploads
+- M5Core2 library for hardware interfacing
+- Custom partition scheme for OTA support
+
+## Part 1: Partition Management
+
+### Custom Partition Scheme
+
+The foundation of our firmware launcher is a carefully designed partition scheme:
+
+```csv
+# Name,   Type, SubType,  Offset,   Size,     Flags
+nvs,      data, nvs,      0x9000,   0x5000,
+otadata,  data, ota,      0xe000,   0x2000,
+factory,  app,  factory,  0x10000,  0x140000,
+ota_0,    app,  ota_0,    0x150000, 0x140000,
+ota_1,    app,  ota_1,    0x290000, 0x140000,
+spiffs,   data, spiffs,   0x3D0000, 0x30000,
+```
+
+This scheme provides multiple key features:
+1. **Factory Partition (1.25MB)**: Stores the launcher itself
+2. **Dual OTA Partitions (1.25MB each)**: Enables safe firmware updates
+3. **NVS Storage (20KB)**: Stores system preferences
+4. **OTA Data (8KB)**: Manages OTA update state
+5. **SPIFFS (192KB)**: Additional file storage
+
+### Safe Boot Implementation
+
+To ensure the system can always recover, I implemented a robust boot management system:
+
+```cpp
+void enforceFactoryBoot() {
+    const esp_partition_t* factory = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, NULL);
+    if (factory) {
+        // Clear OTA data to force factory boot
+        const esp_partition_t* otadata = esp_partition_find_first(
+            ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, NULL);
+        if (otadata != NULL) {
+            esp_partition_erase_range(otadata, 0, otadata->size);
+        }
+        
+        // Set boot partition to factory
+        if (esp_ota_set_boot_partition(factory) != ESP_OK) {
+            Serial.println("Failed to set factory boot partition!");
+        }
+    }
+}
+```
+
+This ensures the device can always boot into the launcher, even if a firmware update fails.
+
+## Part 2: Advanced UI System
+
+### Buffer Management
+
+The UI system uses sophisticated buffer management for smooth animations:
+
+```cpp
+#define SPRITE_WIDTH 320
+#define SPRITE_HEIGHT 240
+#define EASING_STEPS 40
+#define TRANSITION_DURATION 100
+
+static uint16_t* animationBuffer = nullptr;
+
+void initAnimationBuffer() {
+    if (animationBuffer != nullptr) {
+        free(animationBuffer);
+    }
+    animationBuffer = (uint16_t*)ps_malloc(SCREEN_WIDTH * ANIMATION_BUFFER_HEIGHT * sizeof(uint16_t));
+    if (!animationBuffer) {
+        Serial.println("Failed to allocate animation buffer!");
+    }
+}
+```
+
+### Custom Icon Generation
+
+One unique feature is the dynamic icon generation system:
+
+```cpp
+void generateDefaultIcons() {
+    const uint16_t colors[DEFAULT_ICONS_COUNT][3] = {
+        {0x4A, 0x90, 0xE2},  // Blue
+        {0xF3, 0x9C, 0x12},  // Orange
+        {0x2E, 0xCC, 0x71},  // Green
+        {0x9B, 0x59, 0xB6},  // Purple
+        {0xE7, 0x4C, 0x3C}   // Red
+    };
+
+    for (int icon = 0; icon < DEFAULT_ICONS_COUNT; icon++) {
+        switch (icon) {
+            case 0: // Circuit pattern
+                for (int y = 0; y < ICON_SIZE; y++) {
+                    for (int x = 0; x < ICON_SIZE; x++) {
+                        bool line = (x + y) % 16 < 4 || (x - y + ICON_SIZE) % 16 < 4;
+                        defaultIconsData[icon][y * ICON_SIZE + x] = line ? 
+                            RGB565(colors[icon][0], colors[icon][1], colors[icon][2]) :
+                            RGB565(32, 32, 32);
+                    }
+                }
+                break;
+        }
+    }
+}
+```
+
+### Smooth Animations
+
+The animation system uses easing functions for fluid motion:
+
+```cpp
+float easeOutCubic(float t) {
+    return 1.0f - powf(1.0f - t, 3.0f);
+}
+
+void updateAnimation() {
+    if (uiState.isAnimating && (millis() - uiState.lastAnimationUpdate > ANIMATION_DELAY)) {
+        uint32_t elapsed = currentTime - animationStartTime;
+        float progress = min(1.0f, (float)elapsed / ANIMATION_DURATION);
+        float offset = targetOffset * easeOutCubic(progress);
+        
+        if (progress >= 1.0f) {
+            uiState.isAnimating = false;
+            animationOffset = 0;
+            targetOffset = 0;
+        }
+        
+        drawScreen();
+        uiState.lastAnimationUpdate = millis();
+    }
+}
+```
+
+## Part 3: Firmware Management System
+
+### Firmware Structure
+
+```cpp
+struct FirmwareEntry {
+    String name;
+    String path;
+    String iconPath;
+    bool hasCustomIcon;
+    int defaultIconIndex;
+};
+```
+
+### OTA Update Implementation
+
+The OTA update process is carefully managed:
+
+```cpp
+bool executeFirmware(const String& path) {
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    const esp_partition_t* update_partition = esp_ota_get_next_update_partition(NULL);
+    
+    if (!update_partition) {
+        Serial.println("No update partition found");
+        showPopup("Partition Error!", TFT_RED);
+        return false;
+    }
+
+    File firmware = SD.open(path);
+    if (!firmware) {
+        showPopup("Failed to open file!", TFT_RED);
+        return false;
+    }
+
+    esp_ota_handle_t update_handle;
+    esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &update_handle);
+
+    size_t written = 0;
+    uint8_t buf[4096];
+    
+    while (firmware.available()) {
+        size_t toRead = min((size_t)firmware.available(), sizeof(buf));
+        if (firmware.read(buf, toRead) != toRead) {
+            esp_ota_abort(update_handle);
+            firmware.close();
+            return false;
+        }
+
+        err = esp_ota_write(update_handle, buf, toRead);
+        if (err != ESP_OK) {
+            esp_ota_abort(update_handle);
+            firmware.close();
+            return false;
+        }
+
+        written += toRead;
+        updateProgressBar(written, firmware.size());
+    }
+
+    return finalizeUpdate(update_handle, update_partition);
+}
+```
+
+## Part 4: WiFi Upload System
+
+### Web Server Implementation
+
+The WiFi upload system uses ESPAsyncWebServer with a modern React frontend:
+
+```cpp
+void setupWebServer() {
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(200, "text/html", UPLOAD_HTML);
+    });
+
+    server.on("/upload", HTTP_POST, 
+        [](AsyncWebServerRequest *request) {
+            request->send(200, "text/plain", "Upload successful");
+        },
+        [](AsyncWebServerRequest *request, String filename, size_t index, 
+           uint8_t *data, size_t len, bool final) {
+            handleUpload(request, filename, index, data, len, final);
+        }
+    );
+
+    server.begin();
+}
+```
+
+### Upload Handler
+
+```cpp
+void handleUpload(AsyncWebServerRequest *request, String filename, 
+                 size_t index, uint8_t *data, size_t len, bool final) {
+    static File uploadFile;
+    static String currentFilePath;
+    
+    if (!index) {
+        String uploadPath = determineUploadPath(filename);
+        Serial.printf("Upload Start: %s\n", uploadPath.c_str());
+        uploadFile = SD.open(uploadPath, FILE_WRITE);
+        currentFilePath = uploadPath;
+    }
+    
+    if (uploadFile && len) {
+        uploadFile.write(data, len);
+    }
+    
+    if (final) {
+        uploadFile.close();
+        if (currentFilePath.endsWith(".bin")) {
+            loadFirmwareList();
+        }
+    }
+}
+```
+
+## Part 5: Advanced Features
+
+### Watchdog Implementation
+
+To ensure system stability:
+
+```cpp
+#define WDT_TIMEOUT 15
+
+void setupWatchdog() {
+    esp_task_wdt_init(WDT_TIMEOUT, true);
+    esp_task_wdt_add(NULL);
+}
+
+void loop() {
+    esp_task_wdt_reset();
+    handleSystemTasks();
+}
+```
+
+### Touch Input Management
+
+Sophisticated touch handling with debouncing:
+
+```cpp
+void handleTouch() {
+    static uint32_t lastTouchTime = 0;
+    const uint32_t DEBOUNCE_TIME = 300;
+
+    if (M5.Touch.ispressed()) {
+        uint32_t currentTime = millis();
+        if (currentTime - lastTouchTime < DEBOUNCE_TIME) {
+            return;
+        }
+        lastTouchTime = currentTime;
+
+        TouchPoint_t point = M5.Touch.getPressPoint();
+        processTouch(point);
+    }
+}
+```
+
+## Part 6: Memory Management
+
+### PSRAM Utilization
+
+Careful memory management is crucial:
+
+```cpp
+void initializeMemory() {
+    if (psramInit()) {
+        heap_caps_print_heap_info(MALLOC_CAP_SPIRAM);
+        drawBuffer = (uint16_t*)ps_malloc(DRAW_BUFFER_SIZE);
+        if (!drawBuffer) {
+            Serial.println("Failed to allocate draw buffer!");
+        }
+    }
+}
+```
+
+### Buffer Optimization
+
+```cpp
+void optimizeBuffers() {
+    // Use PSRAM for large buffers
+    if (animationBuffer) {
+        free(animationBuffer);
+    }
+    animationBuffer = (uint16_t*)ps_malloc(SCREEN_WIDTH * ANIMATION_BUFFER_HEIGHT * 
+                                         sizeof(uint16_t));
+                                         
+    // Stack-based small buffers
+    uint8_t tempBuffer[128];
+}
+```
+
+## Part 7: Error Handling and Recovery
+
+### Error Recovery System
+
+```cpp
+void handleSystemError(const char* error) {
+    Serial.printf("System Error: %s\n", error);
+    
+    // Save error to NVS
+    preferences.begin("errors", false);
+    preferences.putString("last_error", error);
+    preferences.end();
+    
+    // Show error screen
+    M5.Lcd.fillScreen(TFT_RED);
+    M5.Lcd.setTextColor(TFT_WHITE);
+    M5.Lcd.drawString("System Error", 160, 120, 4);
+    
+    // Attempt recovery
+    if (attemptRecovery()) {
+        ESP.restart();
+    } else {
+        enforceFactoryBoot();
+    }
+}
+```
+
+## Conclusion
+
+Building this firmware launcher was a complex undertaking that required careful consideration of many aspects:
+- Partition management for safe updates
+- Memory optimization for smooth performance
+- UI design for user experience
+- Error handling for reliability
+- WiFi connectivity for easy updates
+
+The result is a robust system that makes firmware management on ESP32 devices much more accessible and reliable. The source code demonstrates various embedded development best practices and could serve as a foundation for similar projects.
+
+## Future Improvements
+
+Several enhancements could make the system even better:
+1. Implement firmware signing for security
+2. Add backup/restore functionality
+3. Support for firmware versioning
+4. Bluetooth update capability
+5. Enhanced icon support with PNG loading
+6. Remote firmware repository integration
+
+
+## Resources
+
+- [ESP32 OTA Documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/ota.html)
+- [M5Stack Core2 Documentation](https://docs.m5stack.com/en/core/core2)
+- [ESPAsyncWebServer](https://github.com/me-no-dev/ESPAsyncWebServer)
+- [Arduino ESP32 Framework](https://github.com/espressif/arduino-esp32)
+
+This launcher project showcases how modern embedded systems can provide sophisticated functionality while maintaining reliability. 
+
