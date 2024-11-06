@@ -3,10 +3,10 @@ layout: post
 title: SpaceX Falcon 9 Landing Success Prediction - A Data Science Deep Dive
 categories: [Data Science, Machine Learning, Python, SQL]
 ---
+SpaceX's ability to reuse first-stage boosters has revolutionized space launch economics, reducing costs from $165+ million to $62 million per launch. This analysis combines multiple data science techniques to predict landing success:
 
 ## Executive Summary
 
-SpaceX's ability to reuse first-stage boosters has revolutionized space launch economics, reducing costs from $165+ million to $62 million per launch. This analysis combines multiple data science techniques to predict landing success:
 
 - Data collection via REST API and web scraping
 - Statistical modeling and machine learning
