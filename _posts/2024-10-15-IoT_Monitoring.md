@@ -289,7 +289,7 @@ if (!Firebase.ready()) {
 
 ## Future Improvements
 
-Potential enhancements include:
+Potential enhancements :
 1. Historical data tracking and graphing
 2. Additional system metrics
 3. More sophisticated entropy analysis
@@ -299,7 +299,7 @@ Potential enhancements include:
 
 ## Conclusion
 
-This M5Stack system monitor project demonstrates the power of combining embedded systems with cloud services for real-time monitoring. The combination of Python backend, Firebase real-time database, and M5Stack's display capabilities creates a powerful and flexible monitoring solution.
+This M5Stack system monitor project demonstrates the power of combining embedded systems with cloud services for real-time monitoring. The combo of Python backend, Firebase RTDB, and M5Stack's capabilities creates a powerful moinatinitoring solution.
 
 The source code shows various best practices for:
 - Real-time data visualization
@@ -308,7 +308,7 @@ The source code shows various best practices for:
 - System monitoring
 - Error handling
 
-This project serves as a foundation for building more sophisticated monitoring and control systems using M5Stack devices.
+This project serves as a foundation for building more sophisticated monitoring and control systems using M5Stack devices, and maybe even one day allow for remote EDR in monitored computers...
 
 ## Resources
 
